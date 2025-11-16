@@ -1,0 +1,25 @@
+{
+  "name": "@fxdif/reactive-differences",
+  "version": "1.0.0",
+  "exports": "./src/main.ts",
+  "tasks": {
+    "dev": "deno run --allow-all src/main.ts",
+    "compile": "deno compile --allow-all --output dist/fxdif src/main.ts",
+    "compile:windows": "deno compile --allow-all --target x86_64-pc-windows-msvc --output dist/fxdif.exe src/main.ts"
+  },
+  "imports": {
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/cli": "jsr:@std/cli@^1.0.0",
+    "@cliffy/prompt": "jsr:@cliffy/prompt@^1.0.0-rc.5",
+    "@cliffy/command": "jsr:@cliffy/command@^1.0.0-rc.5",
+    "@cliffy/ansi": "jsr:@cliffy/ansi@^1.0.0-rc.5",
+    "@cliffy/table": "jsr:@cliffy/table@^1.0.0-rc.5",
+    "@db/sqlite": "jsr:@db/sqlite@^0.11.1",
+    "hono": "jsr:@hono/hono@^4.0.0"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.unstable"],
+    "strict": true
+  }
+}
