@@ -4,8 +4,8 @@
   "exports": "./src/main.ts",
   "tasks": {
     "dev": "deno run --allow-all src/main.ts",
-    "compile": "deno compile --allow-all --output dist/fxdif src/main.ts",
-    "compile:windows": "deno compile --allow-all --target x86_64-pc-windows-msvc --output dist/fxdif.exe src/main.ts"
+    "compile": "deno compile --allow-all --no-check --output dist/fxdif src/main.ts",
+    "compile:windows": "deno compile --allow-all --no-check --target x86_64-pc-windows-msvc --output dist/fxdif.exe src/main.ts"
   },
   "imports": {
     "@std/path": "jsr:@std/path@^1.0.0",

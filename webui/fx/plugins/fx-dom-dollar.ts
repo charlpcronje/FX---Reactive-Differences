@@ -1,0 +1,438 @@
+// /plugins/fx-dom-dollar.ts
+import type { FXCore as FX, FXNodeProxy } from "../fx";
+
+type FXN = FXNodeProxy<any, any>;
+type Setter<T = any> = T | FXN;
+
+function isFXNode(x: any): x is FXN {
+  return x && typeof x === "function" && typeof x.node === "function";
+}
+
+const UNITLESS = new Set([
+  "opacity", "z-index", "zIndex", "flex", "flex-grow", "flexGrow",
+  "flex-shrink", "flexShrink", "order", "orphans", "widows",
+  "font-weight", "fontWeight", "line-height", "lineHeight",
+  "tab-size", "tabSize", "columns", "column-count", "columnCount",
+  "fill-opacity", "fillOpacity", "stroke-opacity", "strokeOpacity",
+  "stroke-miterlimit", "strokeMiterlimit",
+]);
+function needsUnit(prop: string) {
+  return !UNITLESS.has(prop);
+}
+
+function autoPath(el: HTMLElement): string {
+  if (el.id) return `#${el.id}`;
+  const parts: string[] = [];
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== document.body) {
+    let part = cur.tagName.toLowerCase();
+    const parentEl: HTMLElement | null = cur.parentElement;
+    if (parentEl) {
+      const idx = Array.from(parentEl.children).indexOf(cur);
+      part += `:${idx}`;
+    }
+    parts.unshift(part);
+    cur = parentEl;
+  }
+  return parts.join(".");
+}
+
+export default function domDollarPlugin(fx: FX) {
+  // ——————————————————————————————————————————————————————————
+  // Mount map + helpers (lazy)
+  // ——————————————————————————————————————————————————————————
+  const elToPath = new WeakMap<HTMLElement, string>();
+  const mounted = new WeakSet<HTMLElement>();
+
+  function mount(el: HTMLElement): FXN {
+    if (!mounted.has(el)) {
+      const path = "dom." + autoPath(el);
+      elToPath.set(el, path);
+      mounted.add(el);
+      (globalThis as any).$$(path).set(el); // store the real HTMLElement as value
+      // Optional: inherit a DOM behavior to allow $$("dom.…").dom.css(...)
+      // Not required for $(), but nice if you also use $$.
+      (globalThis as any).$$(path).inherit(DomBehavior);
+    }
+    const p = elToPath.get(el)!;
+    return (globalThis as any).$$(p);
+  }
+
+  function applyReactive<T>(valueOrNode: Setter<T>, apply: (v: T)=>void) {
+    if (isFXNode(valueOrNode)) {
+      const src = valueOrNode;
+      const push = () => apply(src.get() as T);
+      push();
+      src.watch(() => push());
+    } else {
+      apply(valueOrNode as T);
+    }
+  }
+
+  // ——————————————————————————————————————————————————————————
+  // DOM Behavior (for $$("dom.…") usage; optional but tiny)
+  // ——————————————————————————————————————————————————————————
+  const DomBehavior = {
+    name: "dom",
+
+    css(this: FXN, prop: string | Record<string, Setter>, v?: Setter) {
+      const el = this.get() as HTMLElement;
+      if (!(el instanceof HTMLElement)) return this;
+      const setOne = (k: string, vv: Setter) =>
+        applyReactive(vv, (nv: any) => {
+          (el.style as any)[k] = typeof nv === "number" && needsUnit(k) ? `${nv}px` : String(nv);
+        });
+      if (typeof prop === "string") {
+        if (v === undefined) return getComputedStyle(el).getPropertyValue(prop);
+        setOne(prop, v);
+      } else {
+        for (const [k, vv] of Object.entries(prop)) setOne(k, vv);
+      }
+      return this;
+    },
+
+    attr(this: FXN, name: string | Record<string, Setter<string>>, v?: Setter<string>) {
+      const el = this.get() as HTMLElement;
+      if (!(el instanceof HTMLElement)) return this;
+      const setOne = (k: string, vv: Setter<string>) =>
+        applyReactive(vv, (nv) => el.setAttribute(k, String(nv ?? "")));
+      if (typeof name === "string") {
+        if (v === undefined) return el.getAttribute(name);
+        setOne(name, v);
+      } else {
+        for (const [k, vv] of Object.entries(name)) setOne(k, vv);
+      }
+      return this;
+    },
+
+    text(this: FXN, v?: Setter<string>) {
+      const el = this.get() as HTMLElement;
+      if (!(el instanceof HTMLElement)) return v === undefined ? undefined : this;
+      if (v === undefined) return el.textContent || "";
+      applyReactive(v, (nv) => { el.textContent = String(nv ?? ""); });
+      return this;
+    },
+
+    html(this: FXN, v?: Setter<string>) {
+      const el = this.get() as HTMLElement;
+      if (!(el instanceof HTMLElement)) return v === undefined ? undefined : this;
+      if (v === undefined) return el.innerHTML;
+      applyReactive(v, (nv) => { el.innerHTML = String(nv ?? ""); });
+      return this;
+    },
+
+    val(this: FXN, v?: Setter) {
+      const el = this.get() as HTMLElement;
+      if (!(el instanceof HTMLElement)) return v === undefined ? undefined : this;
+      if (v === undefined) {
+        if (el instanceof HTMLInputElement) {
+          return el.type === "checkbox" ? !!el.checked : el.value;
+        }
+        if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+          return el.value;
+        }
+        return el.textContent ?? "";
+      }
+      applyReactive(v, (nv: any) => {
+        if (el instanceof HTMLInputElement) {
+          if (el.type === "checkbox") el.checked = !!nv;
+          else el.value = nv ?? "";
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+          el.value = nv ?? "";
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          el.textContent = nv == null ? "" : String(nv);
+        }
+      });
+      return this;
+    },
+
+    addClass(this: FXN, ...names: string[]) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      names.flatMap(n=>n.split(/\s+/)).filter(Boolean).forEach(c=>el.classList.add(c));
+      return this;
+    },
+    removeClass(this: FXN, ...names: string[]) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      names.flatMap(n=>n.split(/\s+/)).filter(Boolean).forEach(c=>el.classList.remove(c));
+      return this;
+    },
+    toggleClass(this: FXN, name: string, state?: boolean) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      el.classList.toggle(name, state ?? !el.classList.contains(name));
+      return this;
+    },
+
+    on(this: FXN, evt: string, selectorOrHandler: string | EventListener, handlerOrOpts?: EventListener | AddEventListenerOptions, opts?: AddEventListenerOptions) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      let selector: string | null = null;
+      let handler: EventListener;
+      let options: AddEventListenerOptions | undefined;
+      if (typeof selectorOrHandler === "string") {
+        selector = selectorOrHandler;
+        handler = handlerOrOpts as EventListener;
+        options = opts;
+      } else {
+        handler = selectorOrHandler;
+        options = handlerOrOpts as AddEventListenerOptions | undefined;
+      }
+      evt.split(/\s+/).forEach(e => {
+        if (selector) {
+          const delegated = function(this: HTMLElement, ev: Event) {
+            const target = (ev.target as HTMLElement)?.closest?.(selector!);
+            if (target && el.contains(target)) handler.call(target, ev);
+          };
+          el.addEventListener(e, delegated as EventListener, options);
+        } else {
+          el.addEventListener(e, handler, options);
+        }
+      });
+      return this;
+    },
+    off(this: FXN, evt: string, handler?: EventListener) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      evt.split(/\s+/).forEach(e => handler ? el.removeEventListener(e, handler) : null);
+      return this;
+    },
+    trigger(this: FXN, evt: string, detail?: any) {
+      const el = this.get() as HTMLElement; if (!(el instanceof HTMLElement)) return this;
+      el.dispatchEvent(new CustomEvent(evt, { bubbles: true, cancelable: true, detail }));
+      return this;
+    },
+  };
+
+  // ——————————————————————————————————————————————————————————
+  // $ HANDLE + GROUP (lazy)
+  // ——————————————————————————————————————————————————————————
+  type Handle = ReturnType<typeof makeHandle>;
+  type Group = ReturnType<typeof makeGroup>;
+
+  function makeHandle(el: HTMLElement) {
+    // We only mount when any method is called (lazy):
+    const h = {
+      el,
+      // Value-ish — setters return h for chaining, getters return the value
+      val(v?: Setter) {
+        const n = mount(el);
+        const r = (DomBehavior.val as any).call(n, v);
+        return v !== undefined ? h : r;
+      },
+      text(v?: Setter<string>) {
+        const n = mount(el);
+        const r = (DomBehavior.text as any).call(n, v);
+        return v !== undefined ? h : r;
+      },
+      html(v?: Setter<string>) {
+        const n = mount(el);
+        const r = (DomBehavior.html as any).call(n, v);
+        return v !== undefined ? h : r;
+      },
+
+      // Attributes / CSS
+      attr(name: string | Record<string, Setter<string>>, v?: Setter<string>) {
+        const n = mount(el);
+        const r = (DomBehavior.attr as any).call(n, name, v);
+        return (typeof name === "object" || v !== undefined) ? h : r;
+      },
+      css(prop: string | Record<string, Setter>, v?: Setter) {
+        const n = mount(el);
+        const r = (DomBehavior.css as any).call(n, prop, v);
+        return (typeof prop === "object" || v !== undefined) ? h : r;
+      },
+
+      // Classes
+      addClass(...names: string[]) { (DomBehavior.addClass as any).call(mount(el), ...names); return h; },
+      removeClass(...names: string[]) { (DomBehavior.removeClass as any).call(mount(el), ...names); return h; },
+      toggleClass(name: string, state?: boolean) { (DomBehavior.toggleClass as any).call(mount(el), name, state); return h; },
+      hasClass(name: string) { const n = mount(el); const _el = n.get() as HTMLElement; return _el.classList.contains(name); },
+
+      // Events
+      on(evt: string, selectorOrHandler: string | EventListener, handlerOrOpts?: EventListener | AddEventListenerOptions, opts?: AddEventListenerOptions) { (DomBehavior.on as any).call(mount(el), evt, selectorOrHandler, handlerOrOpts, opts); return h; },
+      off(evt: string, handler?: EventListener) { (DomBehavior.off as any).call(mount(el), evt, handler); return h; },
+      trigger(evt: string, detail?: any) { (DomBehavior.trigger as any).call(mount(el), evt, detail); return h; },
+
+      // Traversal (still lazy; mounts only returned elements)
+      find(sel: string) {
+        const found = el.querySelector(sel) as HTMLElement | null;
+        return found ? makeHandle(found) : null;
+      },
+      children(sel?: string) {
+        const kids = Array.from(el.children) as HTMLElement[];
+        const filtered = sel ? kids.filter(k => k.matches(sel)) : kids;
+        return makeGroup(filtered);
+      },
+      parent(sel?: string) {
+        const p = el.parentElement; if (!p) return null;
+        if (sel && !p.matches(sel)) return null;
+        return makeHandle(p);
+      },
+      closest(sel: string) {
+        const c = (el.closest as any)(sel) as HTMLElement | null;
+        return c ? makeHandle(c) : null;
+      },
+      next(sel?: string) {
+        let n = el.nextElementSibling as HTMLElement | null;
+        while (n) { if (!sel || n.matches(sel)) return makeHandle(n); n = n.nextElementSibling as any; }
+        return null;
+      },
+      prev(sel?: string) {
+        let p = el.previousElementSibling as HTMLElement | null;
+        while (p) { if (!sel || p.matches(sel)) return makeHandle(p); p = p.previousElementSibling as any; }
+        return null;
+      },
+
+      // Escape hatch: get the FX node for this element (forces mount)
+      fx(): FXN { return mount(el); },
+      // Raw element (no mount)
+      raw(): HTMLElement { return el; }
+    };
+    return h;
+  }
+
+  function makeGroup(els: HTMLElement[] | ArrayLike<HTMLElement>) {
+    const arr: HTMLElement[] = Array.isArray(els) ? els : Array.from(els as any);
+    const g = {
+      elements: arr.map(makeHandle),
+      get length() { return g.elements.length; },
+
+      // Fan-out operations (chainable)
+      val(v?: Setter) { g.elements.forEach(h => h.val(v as any)); return g; },
+      text(v?: Setter<string>) { g.elements.forEach(h => h.text(v as any)); return g; },
+      html(v?: Setter<string>) { g.elements.forEach(h => h.html(v as any)); return g; },
+      attr(name: any, v?: any) { g.elements.forEach(h => h.attr(name as any, v)); return g; }
+      ,
+      css(prop: any, v?: any) { g.elements.forEach(h => h.css(prop as any, v)); return g; },
+      addClass(...names: string[]) { g.elements.forEach(h => h.addClass(...names)); return g; },
+      removeClass(...names: string[]) { g.elements.forEach(h => h.removeClass(...names)); return g; },
+      toggleClass(name: string, state?: boolean) { g.elements.forEach(h => h.toggleClass(name, state)); return g; },
+
+      on(evt: string, selectorOrHandler: string | EventListener, handlerOrOpts?: EventListener | AddEventListenerOptions, opts?: AddEventListenerOptions) { g.elements.forEach(h => h.on(evt, selectorOrHandler, handlerOrOpts, opts)); return g; },
+      off(evt: string, handler?: EventListener) { g.elements.forEach(h => h.off(evt, handler)); return g; },
+      trigger(evt: string, detail?: any) { g.elements.forEach(h => h.trigger(evt, detail)); return g; },
+
+      // Traversal returns new groups/handles lazily
+      find(sel: string) {
+        const found: HTMLElement[] = [];
+        g.elements.forEach(h => {
+          const f = h.raw().querySelectorAll(sel);
+          f && found.push(...Array.from(f) as HTMLElement[]);
+        });
+        const uniq = Array.from(new Set(found));
+        return uniq.length === 1 ? makeHandle(uniq[0]) : makeGroup(uniq);
+      },
+      children(sel?: string) {
+        const acc: HTMLElement[] = [];
+        g.elements.forEach(h => {
+          const kids = Array.from(h.raw().children) as HTMLElement[];
+          const filtered = sel ? kids.filter(k => k.matches(sel)) : kids;
+          acc.push(...filtered);
+        });
+        const uniq = Array.from(new Set(acc));
+        return uniq.length === 1 ? makeHandle(uniq[0]) : makeGroup(uniq);
+      },
+      parent(sel?: string) {
+        const acc: HTMLElement[] = [];
+        g.elements.forEach(h => {
+          const p = h.raw().parentElement;
+          if (p && (!sel || p.matches(sel))) acc.push(p);
+        });
+        const uniq = Array.from(new Set(acc));
+        return uniq.length === 1 ? makeHandle(uniq[0]) : makeGroup(uniq);
+      },
+
+      hasClass(name: string) { return g.elements.some(h => h.hasClass(name)); },
+
+      each(fn: (handle: Handle, index: number) => void) { g.elements.forEach((h, i) => fn(h, i)); return g; },
+
+      // Convenience
+      fxAll(): FXN[] { return g.elements.map(h => h.fx()); },
+      rawAll(): HTMLElement[] { return g.elements.map(h => h.raw()); }
+    };
+    return g;
+  }
+
+  // ——————————————————————————————————————————————————————————
+  // Global $ (single access point)
+  // ——————————————————————————————————————————————————————————
+  function makeRootHandle(target: Document | Window) {
+    const h: any = {
+      el: target,
+      ready(fn: (h: any) => void) {
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", () => fn(h));
+        } else {
+          Promise.resolve().then(() => fn(h));
+        }
+        return h;
+      },
+      on(evt: string, selectorOrHandler: any, handlerOrOpts?: any, opts?: any) {
+        let selector: string | null = null;
+        let handler: EventListener;
+        let options: AddEventListenerOptions | undefined;
+        if (typeof selectorOrHandler === "string") {
+          selector = selectorOrHandler;
+          handler = handlerOrOpts;
+          options = opts;
+        } else {
+          handler = selectorOrHandler;
+          options = handlerOrOpts;
+        }
+        evt.split(/\s+/).forEach(e => {
+          if (selector) {
+            const sel = selector;
+            target.addEventListener(e, function(ev: Event) {
+              const t = (ev.target as HTMLElement)?.closest?.(sel);
+              if (t) handler.call(t, ev);
+            }, options);
+          } else {
+            target.addEventListener(e, handler, options);
+          }
+        });
+        return h;
+      },
+      off(evt: string, handler?: EventListener) {
+        evt.split(/\s+/).forEach(e => handler && target.removeEventListener(e, handler));
+        return h;
+      },
+      trigger(evt: string, detail?: any) {
+        target.dispatchEvent(new CustomEvent(evt, { bubbles: true, cancelable: true, detail }));
+        return h;
+      },
+      raw() { return target; },
+    };
+    return h;
+  }
+
+  function $(sel: string | HTMLElement | NodeListOf<HTMLElement> | HTMLCollection | HTMLElement[] | Document | Window | null | undefined) {
+    if (sel == null) return null;
+    if (sel === document || sel === window) return makeRootHandle(sel as Document | Window);
+    if (typeof sel === "string") {
+      if (sel.startsWith("#") && !sel.includes(" ") && !sel.includes(".")) {
+        const el = document.getElementById(sel.slice(1)) as HTMLElement | null;
+        if (!el) return null;
+        return makeHandle(el);
+      }
+      const list = document.querySelectorAll<HTMLElement>(sel);
+      if (list.length === 0) return null;
+      if (list.length === 1) return makeHandle(list[0]);
+      return makeGroup(Array.from(list));
+    }
+    if (sel instanceof HTMLElement) return makeHandle(sel);
+    if (sel instanceof NodeList || sel instanceof HTMLCollection) {
+      const arr = Array.from(sel) as HTMLElement[];
+      if (arr.length === 0) return null;
+      if (arr.length === 1) return makeHandle(arr[0]);
+      return makeGroup(arr);
+    }
+    if (Array.isArray(sel)) {
+      if (sel.length === 0) return null;
+      if (sel.length === 1) return makeHandle(sel[0]);
+      return makeGroup(sel);
+    }
+    console.warn("[fx-dom-dollar] $ called with unsupported argument:", sel);
+    return null;
+  }
+
+  return $;
+}

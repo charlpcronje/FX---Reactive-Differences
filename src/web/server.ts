@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { Database, ProjectRepository, RuleRepository } from "../db/index.ts";
 import { FolderComparator } from "../core/comparator.ts";
+import { staticAssets } from "./static_assets.ts";
 
 const app = new Hono();
 
@@ -9,6 +10,9 @@ app.use("/*", async (c, next) => {
   c.header("Access-Control-Allow-Origin", "*");
   c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   c.header("Access-Control-Allow-Headers", "Content-Type");
+  if (c.req.method === "OPTIONS") {
+    return c.body(null, 204);
+  }
   await next();
 });
 
@@ -24,6 +28,46 @@ api.get("/projects", (c) => {
   return c.json({ projects });
 });
 
+// Create project
+api.post("/projects", async (c) => {
+  const body = await c.req.json();
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  
+  if (!body.project_name || !body.project_code || !body.base_path) {
+    db.close();
+    return c.json({ error: "Missing required fields" }, 400);
+  }
+
+  const existing = projectRepo.getProjectByCode(body.project_code);
+  if (existing) {
+    db.close();
+    return c.json({ error: "Project code already exists" }, 400);
+  }
+
+  try {
+    const normalizedPath = Database.normalizePath(body.base_path);
+    const projectId = projectRepo.createProject({
+      project_name: body.project_name,
+      project_code: body.project_code,
+      base_path: normalizedPath
+    });
+
+    // Automatically add base path as master folder
+    projectRepo.addFolder({
+      project_id: projectId,
+      folder_path: normalizedPath,
+      is_master: 1
+    });
+
+    db.close();
+    return c.json({ success: true, project_id: projectId });
+  } catch (error) {
+    db.close();
+    return c.json({ error: "Failed to create project" }, 500);
+  }
+});
+
 // Get project by code
 api.get("/projects/:code", (c) => {
   const code = c.req.param("code");
@@ -37,6 +81,29 @@ api.get("/projects/:code", (c) => {
   }
 
   return c.json({ project });
+});
+
+// Delete project
+api.delete("/projects/:code", (c) => {
+  const code = c.req.param("code");
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  const project = projectRepo.getProjectByCode(code);
+  
+  if (!project) {
+    db.close();
+    return c.json({ error: "Project not found" }, 404);
+  }
+
+  // Delete associated rules and folders first (simplified cascade delete here or inside db.ts normally, but we will just delete the project if cascade is set in schema)
+  try {
+    projectRepo.deleteProject(project.id!);
+    db.close();
+    return c.json({ success: true });
+  } catch (err) {
+    db.close();
+    return c.json({ error: "Failed to delete project" }, 500);
+  }
 });
 
 // Get project folders
@@ -55,6 +122,125 @@ api.get("/projects/:code/folders", (c) => {
   db.close();
 
   return c.json({ folders });
+});
+
+// Add project folder
+api.post("/projects/:code/folders", async (c) => {
+  const code = c.req.param("code");
+  const body = await c.req.json();
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  const project = projectRepo.getProjectByCode(code);
+
+  if (!project) {
+    db.close();
+    return c.json({ error: "Project not found" }, 404);
+  }
+
+  if (!body.folder_path) {
+    db.close();
+    return c.json({ error: "Missing folder path" }, 400);
+  }
+
+  const normalizedPath = Database.normalizePath(body.folder_path);
+  const isMaster = body.is_master ? 1 : 0;
+
+  try {
+    projectRepo.addFolder({
+      project_id: project.id!,
+      folder_path: normalizedPath,
+      is_master: isMaster
+    });
+    db.close();
+    return c.json({ success: true });
+  } catch (error) {
+    db.close();
+    return c.json({ error: "Failed to add folder" }, 500);
+  }
+});
+
+// Remove project folder
+api.delete("/projects/:code/folders", async (c) => {
+  const code = c.req.param("code");
+  const body = await c.req.json();
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  const project = projectRepo.getProjectByCode(code);
+
+  if (!project) {
+    db.close();
+    return c.json({ error: "Project not found" }, 404);
+  }
+
+  if (!body.folder_path) {
+    db.close();
+    return c.json({ error: "Missing folder path" }, 400);
+  }
+
+  const normalizedPath = Database.normalizePath(body.folder_path);
+
+  try {
+    projectRepo.removeFolder(project.id!, normalizedPath);
+    db.close();
+    return c.json({ success: true });
+  } catch (error) {
+    db.close();
+    return c.json({ error: "Failed to remove folder" }, 500);
+  }
+});
+
+// Get project rules
+api.get("/projects/:code/rules", (c) => {
+  const code = c.req.param("code");
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  const ruleRepo = new RuleRepository(db);
+  const project = projectRepo.getProjectByCode(code);
+
+  if (!project) {
+    db.close();
+    return c.json({ error: "Project not found" }, 404);
+  }
+
+  const rules = ruleRepo.getRules(project.id!);
+  db.close();
+
+  return c.json({ rules });
+});
+
+// Add project rule
+api.post("/projects/:code/rules", async (c) => {
+  const code = c.req.param("code");
+  const body = await c.req.json();
+  const db = new Database();
+  const projectRepo = new ProjectRepository(db);
+  const ruleRepo = new RuleRepository(db);
+  const project = projectRepo.getProjectByCode(code);
+
+  if (!project) {
+    db.close();
+    return c.json({ error: "Project not found" }, 404);
+  }
+
+  if (!body.rule_type || !body.pattern || !body.action) {
+    db.close();
+    return c.json({ error: "Missing required fields" }, 400);
+  }
+
+  try {
+    ruleRepo.addRule({
+      project_id: project.id!,
+      folder_path: body.folder_path ? Database.normalizePath(body.folder_path) : null,
+      rule_type: body.rule_type,
+      pattern: body.pattern,
+      action: body.action
+    });
+    db.close();
+    return c.json({ success: true });
+  } catch (error) {
+    db.close();
+    return c.json({ error: "Failed to add rule" }, 500);
+  }
 });
 
 // Get project comparison
@@ -111,156 +297,50 @@ api.get("/files/content", async (c) => {
     const content = await Deno.readTextFile(Database.denormalizePath(filePath));
     return c.json({ content });
   } catch (error) {
-    return c.json({ error: "Failed to read file", details: error.message }, 500);
+    if (error instanceof Error) {
+      return c.json({ error: "Failed to read file", details: error.message }, 500);
+    }
+    return c.json({ error: "Failed to read file", details: "An unknown error occurred" }, 500);
   }
 });
 
 // Mount API routes
 app.route("/api", api);
 
-// Fallback to index.html for SPA routing
+// Serve static assets from bundled map
 app.get("/*", async (c) => {
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FXDif - Folder Comparison Tool</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      padding: 20px;
-    }
-    .container {
-      max-width: 800px;
-      text-align: center;
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 20px;
-      padding: 60px 40px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    }
-    h1 {
-      font-size: 3rem;
-      margin-bottom: 20px;
-      background: linear-gradient(to right, #fff, #f0f0f0);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .subtitle {
-      font-size: 1.2rem;
-      margin-bottom: 40px;
-      opacity: 0.9;
-    }
-    .features {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 20px;
-      margin-top: 40px;
-      text-align: left;
-    }
-    .feature {
-      background: rgba(255, 255, 255, 0.15);
-      padding: 20px;
-      border-radius: 10px;
-    }
-    .feature h3 {
-      font-size: 1.1rem;
-      margin-bottom: 10px;
-    }
-    .feature p {
-      font-size: 0.9rem;
-      opacity: 0.8;
-    }
-    .api-info {
-      margin-top: 40px;
-      padding: 20px;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 10px;
-      text-align: left;
-    }
-    code {
-      background: rgba(0, 0, 0, 0.3);
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-family: 'Courier New', monospace;
-      font-size: 0.9rem;
-    }
-    .endpoints {
-      margin-top: 20px;
-    }
-    .endpoint {
-      margin: 10px 0;
-      padding: 10px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 5px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>🎯 FXDif</h1>
-    <p class="subtitle">Reactive Folder Differences Tool</p>
+  const url = new URL(c.req.url);
+  const path = url.pathname === "/" ? "/index.html" : url.pathname;
+  
+  if (staticAssets.has(path)) {
+    const asset = staticAssets.get(path)!;
+    return new Response(asset.data, {
+      status: 200,
+      headers: {
+        "Content-Type": asset.type,
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Resource-Policy": "same-site",
+      }
+    });
+  }
+  
+  // Fallback to index.html for SPA routing if not found and not an API call
+  if (!path.startsWith("/api/")) {
+    const asset = staticAssets.get("/index.html")!;
+    return new Response(asset.data, {
+      status: 200,
+      headers: {
+        "Content-Type": asset.type,
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Resource-Policy": "same-site",
+        "X-Fallback-Reason": `NotFound-${path}`
+      }
+    });
+  }
 
-    <div class="features">
-      <div class="feature">
-        <h3>🔍 Multi-Folder Comparison</h3>
-        <p>Compare any number of folders against a master directory</p>
-      </div>
-      <div class="feature">
-        <h3>📊 Project Management</h3>
-        <p>Save and manage multiple comparison projects</p>
-      </div>
-      <div class="feature">
-        <h3>🎨 Dual Interfaces</h3>
-        <p>Beautiful TUI and web-based UI</p>
-      </div>
-      <div class="feature">
-        <h3>🎯 Smart Filtering</h3>
-        <p>Include/exclude specific file extensions and files</p>
-      </div>
-    </div>
-
-    <div class="api-info">
-      <h2>🚀 API Endpoints</h2>
-      <div class="endpoints">
-        <div class="endpoint">
-          <code>GET /api/projects</code><br>
-          Get all projects
-        </div>
-        <div class="endpoint">
-          <code>GET /api/projects/:code</code><br>
-          Get project details
-        </div>
-        <div class="endpoint">
-          <code>GET /api/projects/:code/folders</code><br>
-          Get project folders
-        </div>
-        <div class="endpoint">
-          <code>GET /api/projects/:code/compare</code><br>
-          Get comparison results
-        </div>
-        <div class="endpoint">
-          <code>GET /api/files/content?path=...</code><br>
-          Get file content
-        </div>
-      </div>
-    </div>
-
-    <p style="margin-top: 40px; opacity: 0.7;">
-      Full React UI coming soon! For now, use the TUI or API endpoints.
-    </p>
-  </div>
-</body>
-</html>`;
-  return c.html(html);
+  return c.text("Not found", 404);
 });
 
 export async function startWebServer(port: number) {

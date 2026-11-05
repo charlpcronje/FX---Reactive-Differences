@@ -1,0 +1,89 @@
+{
+  "plugins": {
+    "$dom": {
+      "path": "./plugins/fx-dom-dollar.ts",
+      "env": "client"
+    },
+    "$components": {
+      "path": "./plugins/fx-components.ts",
+      "env": "client"
+    },
+    "$router": {
+      "path": "./plugins/fx-router.ts",
+      "env": "client"
+    },
+    "$pages": {
+      "path": "./plugins/fx-pages.ts",
+      "env": "client"
+    },
+    "$markdown": {
+      "path": "./plugins/fx-markdown.ts",
+      "env": "both"
+    },
+    "$flow": {
+      "path": "./plugins/fx-flow.ts",
+      "env": "both"
+    },
+    "$cache": {
+      "path": "./plugins/fx-cache.ts",
+      "env": "both"
+    },
+    "$orm": {
+      "path": "./plugins/fx-orm.ts",
+      "env": "both"
+    },
+    "$serialize": {
+      "path": "./plugins/fx-serialize.ts",
+      "env": "both"
+    },
+    "$fs": {
+      "path": "./plugins/fx-filesystem.ts",
+      "env": "both"
+    },
+    "$safe": {
+      "path": "./plugins/fx-safe.ts",
+      "env": "both"
+    },
+    "$atomics": {
+      "path": "./plugins/fx-atomics.ts",
+      "env": "both"
+    },
+    "$timeTravel": {
+      "path": "./plugins/fx-time-travel.ts",
+      "env": "both"
+    },
+    "$devtools": {
+      "path": "./plugins/fx-devtools.ts",
+      "env": "both"
+    },
+    "$viz": {
+      "path": "./plugins/fx-visualizer.ts",
+      "env": "both"
+    },
+    "$api": {
+      "path": "./plugins/fx-api.ts",
+      "env": "both"
+    },
+    "$hono": {
+      "path": "./plugins/fx-hono.ts",
+      "env": "server"
+    },
+    "$server": {
+      "path": "./plugins/fx-server.ts",
+      "env": "server"
+    },
+    "$relay": {
+      "path": "./plugins/fx-relay.ts",
+      "env": "both"
+    },
+    "$flowWorker": {
+      "path": "./plugins/fx-flow-worker.ts",
+      "env": "client"
+    },
+    "$sw": {
+      "path": "./plugins/fx-service-worker-register.ts",
+      "env": "client"
+    }
+  },
+  "config": {}
+}

@@ -1,4 +1,4 @@
-import { DB } from "@db/sqlite";
+import { Database as SQLiteDB } from "@db/sqlite";
 import { join } from "@std/path";
 
 export interface Project {
@@ -39,7 +39,7 @@ export interface ExclusionTemplate {
 }
 
 export class Database {
-  private db: DB;
+  private db: SQLiteDB;
   private dbPath: string;
 
   constructor(dbPath?: string) {
@@ -54,13 +54,13 @@ export class Database {
     }
 
     this.dbPath = dbPath || join(appDir, "fxdif.db");
-    this.db = new DB(this.dbPath);
+    this.db = new SQLiteDB(this.dbPath);
     this.initialize();
   }
 
   private initialize() {
     // Create projects table
-    this.db.execute(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_name TEXT NOT NULL,
@@ -73,7 +73,7 @@ export class Database {
     `);
 
     // Create project_folders table
-    this.db.execute(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS project_folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id INTEGER NOT NULL,
@@ -87,7 +87,7 @@ export class Database {
     `);
 
     // Create file_rules table
-    this.db.execute(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS file_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id INTEGER NOT NULL,
@@ -102,7 +102,7 @@ export class Database {
     `);
 
     // Create exclusion_templates table
-    this.db.execute(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS exclusion_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pattern TEXT NOT NULL UNIQUE,
@@ -132,18 +132,18 @@ export class Database {
     ];
 
     for (const exc of defaultExclusions) {
-      this.db.execute(
-        `INSERT OR IGNORE INTO exclusion_templates (pattern, pattern_type, description) VALUES (?, ?, ?)`,
-        [exc.pattern, exc.type, exc.desc]
+      const stmt = this.db.prepare(
+        `INSERT OR IGNORE INTO exclusion_templates (pattern, pattern_type, description) VALUES (?, ?, ?)`
       );
+      stmt.run([exc.pattern, exc.type, exc.desc]);
     }
 
     // Create indexes for performance
-    this.db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_code ON projects(project_code)`);
-    this.db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(is_deleted)`);
-    this.db.execute(`CREATE INDEX IF NOT EXISTS idx_folders_project ON project_folders(project_id)`);
-    this.db.execute(`CREATE INDEX IF NOT EXISTS idx_folders_deleted ON project_folders(is_deleted)`);
-    this.db.execute(`CREATE INDEX IF NOT EXISTS idx_rules_project ON file_rules(project_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_code ON projects(project_code)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(is_deleted)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_folders_project ON project_folders(project_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_folders_deleted ON project_folders(is_deleted)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_rules_project ON file_rules(project_id)`);
   }
 
   // Helper method to normalize Windows paths for storage
@@ -164,8 +164,21 @@ export class Database {
     this.db.close();
   }
 
-  getDB(): DB {
-    return this.db;
+  getDB() {
+    const db = this.db;
+    return {
+      query: <T extends unknown[]>(sql: string, params?: (string | number | null | boolean | Uint8Array)[]) => {
+        const stmt = db.prepare(sql);
+        return stmt.values(params || []) as T[];
+      },
+      execute: (sql: string, params?: (string | number | null | boolean | Uint8Array)[]) => {
+        const stmt = db.prepare(sql);
+        stmt.run(params || []);
+      },
+      get lastInsertRowId(): number {
+        return db.lastInsertRowId;
+      }
+    };
   }
 
   getPath(): string {

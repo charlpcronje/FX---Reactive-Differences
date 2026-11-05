@@ -2,6 +2,8 @@ import { Input, Confirm, Select } from "@cliffy/prompt";
 import { Database, ProjectRepository, RuleRepository, Project, ProjectFolder } from "../db/index.ts";
 import { basename, resolve } from "@std/path";
 import { ParsedCommand } from "./parser.ts";
+import { TUIViewer } from "../tui/viewer.ts";
+import { FolderComparator } from "../core/comparator.ts";
 
 export class CommandHandler {
   private db: Database;
@@ -24,6 +26,19 @@ export class CommandHandler {
       console.log(`⚠️  A project already exists for this folder: "${existingProject.project_name}"`);
       console.log(`   Project code: ${existingProject.project_code}\n`);
 
+      // Check if it has a master folder
+      const masterFolder = this.projectRepo.getMasterFolder(existingProject.id!);
+      if (!masterFolder) {
+        console.log("⚠️  This project is missing a master folder. Fixing it now...");
+        const normalizedPath = Database.normalizePath(currentPath);
+        this.projectRepo.addFolder({
+          project_id: existingProject.id!,
+          folder_path: normalizedPath,
+          is_master: 1
+        });
+        console.log("✅ Master folder restored.");
+      }
+
       const shouldContinue = await Confirm.prompt({
         message: "Do you want to view this project instead?",
         default: true
@@ -31,6 +46,12 @@ export class CommandHandler {
 
       if (shouldContinue) {
         console.log("\n✨ Opening project view...\n");
+        await this.handleView({
+          action: 'view',
+          projectCode: existingProject.project_code,
+          extensions: { include: [], exclude: [] },
+          files: { include: [], exclude: [] }
+        });
         return;
       }
       return;
@@ -204,6 +225,69 @@ export class CommandHandler {
 
     console.log(`✅ Folder removed from project "${command.projectCode}"`);
     console.log(`   Path: ${currentPath}\n`);
+  }
+
+  async handleView(command: ParsedCommand): Promise<void> {
+    if (!command.projectCode) {
+      console.error("❌ Error: Project code is required");
+      console.log("💡 Tip: Run 'fxdif' to create a new project or 'fxdif --help' for usage");
+      return;
+    }
+
+    const project = this.projectRepo.getProjectByCode(command.projectCode);
+    if (!project) {
+      console.error(`❌ Error: Project "${command.projectCode}" not found`);
+      return;
+    }
+
+    const folders = this.projectRepo.getFolders(project.id!);
+    if (folders.length === 0) {
+      console.log(`ℹ️  No folders added to project "${command.projectCode}" yet`);
+      console.log(`💡 Tip: Navigate to a folder and run: fxdif ${command.projectCode}+`);
+      return;
+    }
+
+    // Get master folder
+    const masterFolder = folders.find(f => f.is_master === 1);
+    if (!masterFolder) {
+      console.error("❌ Error: No master folder set for this project");
+      return;
+    }
+
+    const compareFolders = folders.filter(f => f.is_master !== 1);
+
+    if (compareFolders.length === 0) {
+      console.log(`ℹ️  Only the master folder exists for project "${command.projectCode}"`);
+      console.log(`💡 Tip: Navigate to other folders and run: fxdif ${command.projectCode}+`);
+      return;
+    }
+
+    // Get rules
+    const rules = this.ruleRepo.getRules(project.id!);
+    const defaultExclusions = this.ruleRepo.getDefaultExclusions();
+
+    // Build scan options
+    const scanOptions = {
+      excludeFolders: defaultExclusions,
+      includeExtensions: command.extensions.include,
+      excludeExtensions: command.extensions.exclude,
+      includeFiles: command.files.include,
+      excludeFiles: command.files.exclude,
+      rules
+    };
+
+    // Perform comparison
+    console.log("🔍 Scanning and comparing folders...\n");
+    const comparator = new FolderComparator();
+    const comparison = await comparator.compareFolders(
+      masterFolder,
+      compareFolders,
+      scanOptions
+    );
+
+    // Display results
+    const viewer = new TUIViewer();
+    viewer.renderComparison(comparison, { showOnlyDifferences: false });
   }
 
   getDatabase(): Database {

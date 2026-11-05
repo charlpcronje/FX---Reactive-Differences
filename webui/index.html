@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FXDif 3D Enterprise — Web UI</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- Tween.js for animations -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+  <!-- Monaco Editor Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs/loader.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #050505;
+      --bg-panel: rgba(15, 17, 21, 0.85);
+      --bg-hover: rgba(30, 33, 40, 0.9);
+      --border-color: rgba(42, 45, 53, 0.5);
+      --text-main: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #00f0ff;
+      --success: #00ff88;
+      --warning: #ffb800;
+      --danger: #ff0055;
+      --sidebar-width: 320px;
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    #three-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+    }
+
+    #app-container {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      width: 100%;
+      height: 100%;
+      pointer-events: none; /* Let clicks pass through to 3D canvas where empty */
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      pointer-events: auto;
+      box-shadow: 5px 0 25px rgba(0,0,0,0.5);
+    }
+    .brand {
+      padding: 20px;
+      font-size: 1.5rem;
+      font-weight: 800;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    .sidebar-section {
+      padding: 15px 20px 5px;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .action-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      border-radius: 4px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      transition: all 0.2s;
+    }
+    .action-btn:hover {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+    }
+
+    .project-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+    .project-list::-webkit-scrollbar { width: 4px; }
+    .project-list::-webkit-scrollbar-thumb { background: var(--border-color); }
+
+    .project-item {
+      padding: 12px 15px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.2s;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+      border: 1px solid transparent;
+    }
+    .project-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+    .project-item.active {
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--accent);
+    }
+    
+    .proj-info { display: flex; align-items: center; gap: 10px; }
+    .proj-actions { display: none; gap: 5px; }
+    .project-item:hover .proj-actions { display: flex; }
+
+    /* Tools Panel (Bottom Left) */
+    .tools-panel {
+      padding: 20px;
+      border-top: 1px solid var(--border-color);
+      background: rgba(0,0,0,0.2);
+    }
+    
+    .config-group { margin-bottom: 15px; }
+    .config-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 5px; display: block; }
+    .config-input-row { display: flex; gap: 5px; }
+    .config-input {
+      flex: 1;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid var(--border-color);
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .config-input:focus { outline: none; border-color: var(--accent); }
+
+    /* Main Area Overlays */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    
+    .header {
+      height: 80px;
+      display: flex;
+      align-items: center;
+      padding: 0 40px;
+      justify-content: space-between;
+      background: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%);
+      pointer-events: auto;
+    }
+    .header-title {
+      font-size: 1.5rem;
+      font-weight: 300;
+      letter-spacing: 2px;
+      text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+    }
+    
+    /* Metrics */
+    .metrics-bar {
+      display: flex;
+      gap: 30px;
+    }
+    .metric-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .metric-value { font-size: 1.8rem; font-weight: 200; font-family: monospace; }
+    .metric-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 2px; color: var(--text-muted); }
+    
+    .m-total { color: var(--accent); text-shadow: 0 0 10px var(--accent); }
+    .m-match { color: var(--success); text-shadow: 0 0 10px var(--success); }
+    .m-modified { color: var(--warning); text-shadow: 0 0 10px var(--warning); }
+    .m-missing { color: var(--danger); text-shadow: 0 0 10px var(--danger); }
+
+    /* Right Panel - Details & Rules */
+    .right-panel {
+      position: absolute;
+      right: 0;
+      top: 80px;
+      bottom: 0;
+      width: 350px;
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      border-left: 1px solid var(--border-color);
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .right-panel.open {
+      transform: translateX(0);
+    }
+
+    .panel-header {
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-content {
+      padding: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    
+    .rule-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      margin: 2px;
+    }
+    .rule-tag.include { color: var(--success); border-color: rgba(0,255,136,0.3); }
+    .rule-tag.exclude { color: var(--danger); border-color: rgba(255,0,85,0.3); }
+    .rule-tag i { cursor: pointer; opacity: 0.6; }
+    .rule-tag i:hover { opacity: 1; }
+
+    /* Editor Modal */
+    .editor-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    .editor-modal.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .editor-content {
+      width: 80%;
+      height: 85%;
+      background: #0f1115; /* Dark solid for editor */
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 0 50px rgba(0, 240, 255, 0.2);
+      transform: scale(0.95) translateY(20px);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .editor-modal.active .editor-content {
+      transform: scale(1) translateY(0);
+    }
+    .editor-header {
+      padding: 15px 20px;
+      background: #16181d;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .editor-title {
+      font-family: 'SF Mono', monospace;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    #monaco-container {
+      flex: 1;
+      width: 100%;
+    }
+    
+    /* Global Loading */
+    #global-loader {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--accent);
+      font-size: 2rem;
+      z-index: 50;
+      pointer-events: none;
+      display: none;
+      text-shadow: 0 0 20px var(--accent);
+    }
+    
+    /* 3D HUD Tooltip */
+    #node-tooltip {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid var(--accent);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      pointer-events: none;
+      display: none;
+      z-index: 40;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+      backdrop-filter: blur(5px);
+    }
+    #node-tooltip .filename { font-weight: bold; margin-bottom: 5px; color: var(--accent); font-family: monospace;}
+    #node-tooltip .folder { color: var(--text-muted); font-size: 0.7rem;}
+    
+    /* Toggle Panel Button */
+    .toggle-panel-btn {
+      position: absolute;
+      right: 20px;
+      top: 100px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      z-index: 20;
+      transition: all 0.2s;
+    }
+    .toggle-panel-btn:hover { background: var(--accent); color: black; }
+  </style>
+</head>
+<body>
+  <!-- 3D Canvas Background -->
+  <canvas id="three-canvas"></canvas>
+  
+  <div id="node-tooltip">
+    <div class="filename">file.ts</div>
+    <div class="folder">Folder: src/</div>
+    <div class="status">Status: Match</div>
+  </div>
+
+  <div id="global-loader"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
+
+  <div id="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <i class="fa-solid fa-cube"></i> FXDif 3D
+      </div>
+      
+      <div class="sidebar-section">
+        Projects
+        <button class="action-btn" id="btn-new-project" title="Create New Project"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <div class="project-list" id="projects-list"></div>
+
+      <!-- Create Project Form (Hidden by default) -->
+      <div id="new-project-form" style="display: none; padding: 15px; border-top: 1px solid var(--border-color);">
+        <div style="font-size: 0.8rem; margin-bottom: 10px; color: var(--accent);">Create Project</div>
+        <input type="text" class="config-input" id="inp-proj-name" placeholder="Project Name" style="margin-bottom: 5px; width: 100%;">
+        <input type="text" class="config-input" id="inp-proj-code" placeholder="Project Code" style="margin-bottom: 5px; width: 100%;">
+        <input type="text" class="config-input" id="inp-proj-path" placeholder="Base Path (Master)" style="margin-bottom: 10px; width: 100%;">
+        <div style="display: flex; gap: 5px;">
+          <button class="action-btn" id="btn-save-project" style="flex: 1; background: var(--accent); color: black;">Save</button>
+          <button class="action-btn" id="btn-cancel-project" style="flex: 1;">Cancel</button>
+        </div>
+      </div>
+      
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="header">
+        <div class="header-title" id="current-project-title">Select a Project</div>
+        <div class="metrics-bar" id="metrics-bar" style="opacity: 0; transition: opacity 0.5s;">
+          <div class="metric-card">
+            <span class="metric-value m-total" id="metric-total">0</span>
+            <span class="metric-label">Nodes</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value m-match" id="metric-match">0</span>
+            <span class="metric-label">Matched</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value m-modified" id="metric-modified">0</span>
+            <span class="metric-label">Modified</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value m-missing" id="metric-missing">0</span>
+            <span class="metric-label">Missing</span>
+          </div>
+        </div>
+      </header>
+    </main>
+
+    <button class="toggle-panel-btn" id="btn-toggle-panel" style="display: none;"><i class="fa-solid fa-bars-staggered"></i></button>
+
+    <!-- Right Panel (Folders & Rules) -->
+    <aside class="right-panel" id="right-panel">
+      <div class="panel-header">
+        <h3 style="font-size: 1rem; color: var(--accent);">Configuration</h3>
+        <button class="action-btn" id="btn-close-panel"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="panel-content">
+        
+        <div class="config-group">
+          <div class="sidebar-section" style="padding: 0 0 10px 0;">Folders</div>
+          <div id="folders-list" style="margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px;"></div>
+          <div class="config-input-row">
+            <input type="text" class="config-input" id="inp-folder-path" placeholder="Add Compare Folder Path...">
+            <button class="action-btn" id="btn-add-folder"><i class="fa-solid fa-plus"></i></button>
+          </div>
+        </div>
+
+        <div class="config-group" style="margin-top: 30px;">
+          <div class="sidebar-section" style="padding: 0 0 10px 0;">Rules</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">Extensions</div>
+          <div id="rules-ext-list" style="margin-bottom: 10px;"></div>
+          
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">Files</div>
+          <div id="rules-file-list" style="margin-bottom: 10px;"></div>
+
+          <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <select class="config-input" id="inp-rule-type" style="margin-bottom: 5px; width: 100%;">
+              <option value="extension">Extension</option>
+              <option value="file">File</option>
+            </select>
+            <select class="config-input" id="inp-rule-action" style="margin-bottom: 5px; width: 100%;">
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+            </select>
+            <div class="config-input-row">
+              <input type="text" class="config-input" id="inp-rule-pattern" placeholder="Pattern (e.g. ts, src/app.ts)">
+              <button class="action-btn" id="btn-add-rule"><i class="fa-solid fa-plus"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 30px; text-align: center;">
+          <button class="action-btn" id="btn-refresh-scan" style="width: 100%; padding: 10px; background: var(--accent); color: black; font-weight: bold; border: none;">
+            <i class="fa-solid fa-rotate"></i> Run 3D Scan
+          </button>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Editor Modal -->
+  <div class="editor-modal" id="editor-modal">
+    <div class="editor-content">
+      <div class="editor-header">
+        <div class="editor-title">
+          <i class="fa-solid fa-file-code" style="color: var(--accent);"></i>
+          <span id="editor-filename">filename.ts</span>
+          <span id="editor-badge" class="status-badge" style="background: rgba(255,255,255,0.1);">MATCH</span>
+        </div>
+        <button class="btn-close" id="close-editor" style="background: none; border: none; color: white; cursor: pointer; font-size: 1.2rem;"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div id="monaco-container"></div>
+    </div>
+  </div>
+
+  <!-- Load FX Framework -->
+  <script type="module" src="/fx/fx.ts?v=3"></script>
+  <script type="module">
+    const resp = await fetch('/fx/bundle.fxb?v=3');
+    const data = new Uint8Array(await resp.arrayBuffer());
+    if (globalThis.__fx_load_bundle) globalThis.__fx_load_bundle(data);
+  </script>
+  <script type="module" src="/src/client.ts?v=3"></script>
+  <script type="module" src="/src/app.ts?v=3"></script>
+</body>
+</html>

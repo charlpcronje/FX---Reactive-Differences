@@ -48,7 +48,7 @@ export class ProjectRepository {
        ORDER BY created_at DESC`
     );
 
-    return result.map(([id, project_name, project_code, base_path, created_at, updated_at, is_deleted]) => ({
+    return result.map(([id, project_name, project_code, base_path, created_at, updated_at, is_deleted]: [number, string, string, string, string, string, number]) => ({
       id, project_name, project_code, base_path, created_at, updated_at, is_deleted
     }));
   }
@@ -62,12 +62,12 @@ export class ProjectRepository {
 
   addFolder(folder: ProjectFolder): number {
     try {
-      const result = this.db.getDB().query<[number]>(
+      this.db.getDB().execute(
         `INSERT INTO project_folders (project_id, folder_path, is_master)
-         VALUES (?, ?, ?) RETURNING id`,
+         VALUES (?, ?, ?)`,
         [folder.project_id, folder.folder_path, folder.is_master || 0]
       );
-      return result[0]?.[0] || 0;
+      return this.db.getDB().lastInsertRowId;
     } catch (error) {
       // Handle unique constraint violation
       if (error instanceof Error && error.message.includes('UNIQUE')) {
@@ -95,7 +95,7 @@ export class ProjectRepository {
       [projectId]
     );
 
-    return result.map(([id, project_id, folder_path, is_master, created_at, is_deleted]) => ({
+    return result.map(([id, project_id, folder_path, is_master, created_at, is_deleted]: [number, number, string, number, string, number]) => ({
       id, project_id, folder_path, is_master, created_at, is_deleted
     }));
   }

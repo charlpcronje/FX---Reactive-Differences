@@ -1,6 +1,8 @@
 import { walk } from "@std/fs";
-import { join, relative, sep } from "@std/path";
+import { join, relative } from "@std/path";
 import { FileRule } from "../db/index.ts";
+
+const sep = Deno.build.os === "windows" ? "\\" : "/";
 
 export interface FileInfo {
   path: string;
